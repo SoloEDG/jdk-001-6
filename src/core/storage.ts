@@ -25,11 +25,15 @@ export function saveProjects(projects: PixelProject[]): void {
 }
 
 export function loadPreferences(): EditorPreferences {
-  return readJson<EditorPreferences>(STORAGE_KEYS.preferences, {
+  const fallback: EditorPreferences = {
     activeColor: defaultActiveColor(),
     activeTool: 'brush',
     activeProjectId: null,
-  })
+    symmetryMode: 'off',
+  }
+  const stored = readJson<EditorPreferences | null>(STORAGE_KEYS.preferences, null)
+  // 兼容旧版本存档：补齐新增的对称字段
+  return stored ? { ...fallback, ...stored } : fallback
 }
 
 export function savePreferences(prefs: EditorPreferences): void {

@@ -3,6 +3,7 @@ import { CANVAS_SIZES } from '../core/constants'
 import type { ToolType } from '../core/types'
 import { useEditorStore } from '../editor/useEditorStore'
 import PalettePanel from './PalettePanel.vue'
+import SymmetryPanel from './SymmetryPanel.vue'
 
 const store = useEditorStore()
 
@@ -37,10 +38,32 @@ const tools: { id: ToolType; label: string; hint: string }[] = [
           {{ t.label }}
         </button>
       </div>
+      <div class="history-actions">
+        <button
+          type="button"
+          class="tool-btn history-btn"
+          :disabled="!store.canUndo"
+          title="撤销（Ctrl/⌘ + Z），镜像像素一并回退"
+          @click="store.undoLast()"
+        >
+          ↶ 撤销
+        </button>
+        <button
+          type="button"
+          class="tool-btn history-btn"
+          :disabled="!store.canRedo"
+          title="重做（Ctrl/⌘ + Shift + Z）"
+          @click="store.redoLast()"
+        >
+          ↷ 重做
+        </button>
+      </div>
       <p v-if="store.prefs.activeTool === 'line' && store.linePending" class="hint line-hint">
         已选起点，点击终点完成直线
       </p>
     </section>
+
+    <SymmetryPanel />
 
     <section class="panel">
       <h3>画布尺寸</h3>

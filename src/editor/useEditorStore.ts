@@ -13,8 +13,18 @@ import {
   saveProjects,
   upsertProject,
 } from '../core/storage'
-import type { CanvasSize, PixelProject, ToolType } from '../core/types'
+import type { CanvasSize, PixelProject, SymmetryMode, ToolType } from '../core/types'
 import { createAnimationPlayer } from './animationPlayer'
+import {
+  canRedo as historyCanRedo,
+  canUndo as historyCanUndo,
+  clearFrameHistory,
+  clearProjectHistory,
+  historyVersion,
+  pushUndoSnapshot,
+  redo as historyRedo,
+  undo as historyUndo,
+} from './history'
 import {
   addFrameToProject,
   addLayerToActiveFrame,
@@ -112,9 +122,19 @@ function setTool(tool: ToolType) {
   persistPrefs()
 }
 
+function setSymmetryMode(mode: SymmetryMode) {
+  prefs.symmetryMode = mode
+  persistPrefs()
+}
+
 function setCanvasSize(size: CanvasSize) {
   if (!CANVAS_SIZES.includes(size)) return
-  mutateProject((p) => withCanvasSize(p, size))
+  const p = activeProject.value
+  if (p) {
+    // 尺寸变更会重排全部像素，旧快照不再适用，清空该项目所有帧的历史
+    for (const frame of p.frames) clearFrameHistory(p.id, frame.id)
+  }
+  mutateProject((proj) => withCanvasSize(proj, size))
 }
 
 function onCanvasPointer(x: number, y: number) {
@@ -130,6 +150,7 @@ function onCanvasPointer(x: number, y: number) {
       activeColor: prefs.activeColor,
       tool: prefs.activeTool,
       linePending: linePending.value,
+      symmetryMode: prefs.symmetryMode,
     },
     x,
     y,
@@ -140,6 +161,9 @@ function onCanvasPointer(x: number, y: number) {
   if (result.activeColor) setActiveColor(result.activeColor)
 
   if (result.layers !== frame.layers) {
+    // 像素确实被改写（含对称镜像格）：先存编辑前快照，再提交，
+    // 一次落笔与其镜像像素属于同一个撤销单元
+    pushUndoSnapshot(p.id, frame.id, frame.layers)
     mutateProject((proj) =>
       withFrameLayers(proj, proj.activeFrameIndex, result.layers),
     )
@@ -148,6 +172,44 @@ function onCanvasPointer(x: number, y: number) {
     }
   }
 }
+
+function undoLast() {
+  const p = activeProject.value
+  const frame = activeFrame.value
+  if (!p || !frame || previewFrameIndex.value !== null) return
+  const restored = historyUndo(p.id, frame.id, frame.layers)
+  if (!restored) return
+  linePending.value = null
+  mutateProject((proj) =>
+    withFrameLayers(proj, proj.activeFrameIndex, restored),
+  )
+}
+
+function redoLast() {
+  const p = activeProject.value
+  const frame = activeFrame.value
+  if (!p || !frame || previewFrameIndex.value !== null) return
+  const restored = historyRedo(p.id, frame.id, frame.layers)
+  if (!restored) return
+  linePending.value = null
+  mutateProject((proj) =>
+    withFrameLayers(proj, proj.activeFrameIndex, restored),
+  )
+}
+
+const canUndo = computed(() => {
+  historyVersion.value
+  const p = activeProject.value
+  const frame = activeFrame.value
+  return !!p && !!frame && historyCanUndo(p.id, frame.id)
+})
+
+const canRedo = computed(() => {
+  historyVersion.value
+  const p = activeProject.value
+  const frame = activeFrame.value
+  return !!p && !!frame && historyCanRedo(p.id, frame.id)
+})
 
 function setActiveLayer(index: number) {
   mutateProject((p) => withActiveLayer(p, index))
@@ -176,7 +238,10 @@ function addFrame() {
 }
 
 function deleteFrame(index: number) {
-  mutateProject((p) => deleteFrameAt(p, index))
+  const p = activeProject.value
+  const frame = p?.frames[index]
+  if (p && frame) clearFrameHistory(p.id, frame.id)
+  mutateProject((proj) => deleteFrameAt(proj, index))
 }
 
 function setFrameDelay(ms: number) {
@@ -222,6 +287,7 @@ function loadProject(id: string) {
 }
 
 function deleteProject(id: string) {
+  clearProjectHistory(id)
   projects.value = removeProject(projects.value, id)
   if (projects.value.length === 0) {
     const fallback = createProject('未命名项目')
@@ -269,10 +335,15 @@ function buildEditorStore() {
     linePending,
     isPlaying,
     previewFrameIndex,
+    canUndo,
+    canRedo,
     setActiveColor,
     setTool,
+    setSymmetryMode,
     setCanvasSize,
     onCanvasPointer,
+    undoLast,
+    redoLast,
     setActiveLayer,
     toggleLayerVisible,
     deleteLayer,
